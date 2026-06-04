@@ -138,22 +138,41 @@ new_window() {
 	fi
 }
 
+# Saved working directory of a session (session_path). Empty for saves made
+# before session lines existed, so the caller can fall back to the pane's dir.
+session_dir() {
+	local session_name="$1"
+	local dir
+	dir="$(awk -v s="$session_name" 'BEGIN { FS="\t" } $1 == "session" && $2 == s { print $3; exit }' "$(last_resurrect_file)")"
+	dir="$(remove_first_char "$dir")"
+	echo "${dir/#\~/$HOME}"
+}
+
 new_session() {
 	local session_name="$1"
 	local window_number="$2"
 	local dir="$3"
 	local pane_index="$4"
+	local session_dir="$5"
 	local pane_id="${session_name}:${window_number}.${pane_index}"
+	# create the session in its saved working dir so #{session_path} is correct;
+	# fall back to the pane's dir for saves with no session line
+	local create_dir="${session_dir:-$dir}"
 	if is_restoring_pane_contents && pane_contents_file_exists "$pane_id"; then
 		local pane_creation_command="$(pane_creation_command "$session_name" "$window_number" "$pane_index")"
-		TMUX="" tmux -S "$(tmux_socket)" new-session -d -s "$session_name" -c "$dir" "$pane_creation_command"
+		TMUX="" tmux -S "$(tmux_socket)" new-session -d -s "$session_name" -c "$create_dir" "$pane_creation_command"
 	else
-		TMUX="" tmux -S "$(tmux_socket)" new-session -d -s "$session_name" -c "$dir"
+		TMUX="" tmux -S "$(tmux_socket)" new-session -d -s "$session_name" -c "$create_dir"
 	fi
 	# change first window number if necessary
 	local created_window_num="$(first_window_num)"
 	if [ $created_window_num -ne $window_number ]; then
 		tmux move-window -s "${session_name}:${created_window_num}" -t "${session_name}:${window_number}"
+	fi
+	# session_path is set from create_dir above; restore the first pane to its
+	# own dir without disturbing it (respawn adds no window, so no renumbering)
+	if [ "$create_dir" != "$dir" ]; then
+		tmux respawn-pane -k -t "${session_name}:${window_number}" -c "$dir"
 	fi
 }
 
@@ -198,7 +217,9 @@ restore_pane() {
 		elif session_exists "$session_name"; then
 			new_window "$session_name" "$window_number" "$dir" "$pane_index"
 		else
-			new_session "$session_name" "$window_number" "$dir" "$pane_index"
+			# session_path (5th arg) sets the session's working dir; the pane
+			# itself still restores to its own dir (see upstream #336/#477)
+			new_session "$session_name" "$window_number" "$dir" "$pane_index" "$(session_dir "$session_name")"
 		fi
 		# set pane title
 		tmux select-pane -t "$session_name:$window_number.$pane_index" -T "$pane_title"

@@ -25,6 +25,16 @@ grouped_sessions_format() {
 	echo "$format"
 }
 
+session_format() {
+	local format
+	format+="session"
+	format+="${delimiter}"
+	format+="#{session_name}"
+	format+="${delimiter}"
+	format+=":#{session_path}"
+	echo "$format"
+}
+
 pane_format() {
 	local format
 	format+="pane"
@@ -200,6 +210,18 @@ dump_panes() {
 		done
 }
 
+dump_sessions() {
+	tmux list-sessions -F "$(session_format)" |
+		while IFS=$d read line_type session_name dir; do
+			# not saving grouped sessions; they're restored via -t
+			if is_session_grouped "$session_name"; then
+				continue
+			fi
+			dir=$(echo $dir | sed 's/ /\\ /') # escape spaces, as dump_panes does
+			echo "${line_type}${d}${session_name}${d}${dir}"
+		done
+}
+
 dump_windows() {
 	dump_windows_raw |
 		while IFS=$d read line_type session_name window_index window_name window_active window_flags window_layout; do
@@ -240,6 +262,7 @@ save_all() {
 	local last_resurrect_file="$(last_resurrect_file)"
 	mkdir -p "$(resurrect_dir)"
 	fetch_and_dump_grouped_sessions > "$resurrect_file_path"
+	dump_sessions >> "$resurrect_file_path"
 	dump_panes   >> "$resurrect_file_path"
 	dump_windows >> "$resurrect_file_path"
 	dump_state   >> "$resurrect_file_path"
